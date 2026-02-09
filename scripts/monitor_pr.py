@@ -9,8 +9,12 @@ import sys
 def get_pr_data(pr_url):
     """Fetch PR comments, reviews, and review requests using gh CLI."""
     cmd = [
-        "gh", "pr", "view", pr_url, "--json",
-        "comments,reviews,reviewRequests,state,url"
+        "gh",
+        "pr",
+        "view",
+        pr_url,
+        "--json",
+        "comments,reviews,reviewRequests,state,url",
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
@@ -32,12 +36,19 @@ def has_pending_reviewers(data):
         if login:
             reviewed_by.add(login.lower())
 
+    # Bots/services to ignore when checking for pending reviews
+    IGNORED_REVIEWERS = {"github-copilot", "copilot", "github-actions"}
+
     # Check if any requested reviewer hasn't submitted yet
     for req in review_requests:
         login = req.get("login", "")
         slug = req.get("slug", "")  # team reviews
         name = req.get("name", "")
         identifier = (login or slug or name).lower()
+
+        if identifier in IGNORED_REVIEWERS:
+            continue
+
         if identifier and identifier not in reviewed_by:
             return True, identifier
     return False, None
@@ -50,8 +61,10 @@ def main():
         "--interval", type=int, default=15, help="Polling interval in seconds"
     )
     parser.add_argument(
-        "--timeout", type=int, default=1200,
-        help="Max time to wait in seconds (default: 1200 = 20 minutes)"
+        "--timeout",
+        type=int,
+        default=1200,
+        help="Max time to wait in seconds (default: 1200 = 20 minutes)",
     )
     args = parser.parse_args()
 
@@ -80,8 +93,7 @@ def main():
             current_reviews = len(current_data.get("reviews", []))
 
             new_activity = (
-                current_comments > initial_comments
-                or current_reviews > initial_reviews
+                current_comments > initial_comments or current_reviews > initial_reviews
             )
 
             if new_activity:
@@ -121,15 +133,23 @@ def main():
     else:
         # Timeout reached — still report current state
         current_data = get_pr_data(args.pr_url)
-        pending, reviewer = has_pending_reviewers(current_data) if current_data else (False, None)
+        pending, reviewer = (
+            has_pending_reviewers(current_data) if current_data else (False, None)
+        )
         print(f"\nTimeout reached ({args.timeout}s).")
         if pending:
-            print(f"WARNING: Reviewer '{reviewer}' still has not completed their review.")
+            print(
+                f"WARNING: Reviewer '{reviewer}' still has not completed their review."
+            )
         output = {
             "timeout": True,
             "pending_reviewer": reviewer,
-            "new_comments": current_data.get("comments", [])[initial_comments:] if current_data else [],
-            "new_reviews": current_data.get("reviews", [])[initial_reviews:] if current_data else [],
+            "new_comments": current_data.get("comments", [])[initial_comments:]
+            if current_data
+            else [],
+            "new_reviews": current_data.get("reviews", [])[initial_reviews:]
+            if current_data
+            else [],
             "all_reviewers_done": not pending,
         }
         print(json.dumps(output, indent=2))
