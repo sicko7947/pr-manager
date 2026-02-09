@@ -118,16 +118,34 @@ git push
 
 ### 7. Reply to Comments
 
-Reply to **every single comment** that was part of the review batch.
+Reply to **every single comment individually** — one reply per review comment. **NEVER batch multiple responses into a single summary comment** (e.g., `gh pr comment` with a combined body). Each reviewer comment must get its own threaded reply so the conversation stays inline with the code.
 
-- **If implemented:** "Fixed: [Brief explanation of change]"
+- **If implemented:** "Fixed: [Brief explanation of what was changed and why]"
 - **If NOT implemented:** "Skipped: [Reasoning why it was not implemented, e.g., 'This is a nitpick handled by formatter' or 'This suggestion would break X']"
 
+#### How to Reply
+
+**Step 1: Get all review comments and their IDs**
+
 ```bash
-# Reply to a specific comment
+# Fetch all review comments on the PR (these are inline code comments)
+gh api repos/{owner}/{repo}/pulls/{pr_number}/comments --paginate --jq '.[] | {id, path, body}'
+```
+
+**Step 2: Reply to EACH comment individually using the replies endpoint**
+
+```bash
+# Reply to a specific comment — use the comment's numeric ID
 gh api repos/{owner}/{repo}/pulls/{pr_number}/comments/{comment_id}/replies \
   -f body="Fixed: updated logic per review feedback."
 ```
+
+**CRITICAL RULES:**
+- **ONE reply per comment.** Do NOT combine responses.
+- **Use the `/replies` endpoint** (NOT `gh pr comment` which posts a top-level comment).
+- **Use the comment ID** from the review comments API, not the review ID.
+- If a reply fails, retry that specific comment — do NOT fall back to a single summary comment.
+- Reply to comments **sequentially** (one at a time) to avoid rate limiting or sibling call errors.
 
 ### 8. Loop or Finalize
 
