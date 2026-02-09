@@ -1,25 +1,24 @@
 ---
 name: pr-manager
-description: Automates creating PRs, monitoring for reviews (refreshing every 15s), implementing feedback (High/Medium criticality only), replying to comments, and waiting for merge.
+description: Automates creating PRs, monitoring for reviews (refreshing every 15s, 20min timeout), running codebase validation (lint/check/tidy), implementing feedback (High/Medium criticality only), committing and pushing fixes, replying to comments, and waiting for ALL reviewers to finish before exiting.
 ---
 
 # PR Manager
 
-This skill manages the lifecycle of a Pull Request, from creation to feedback implementation and merge readiness.
+This skill manages the lifecycle of a Pull Request, from creation through feedback implementation to merge readiness. It ensures all reviewers have completed their reviews before proceeding.
 
 ## When to Use This Skill
 
 Use this skill when:
-- You need to create a PR and actively wait for code reviews (e.g., from Gemini, Copilot, or human reviewers).
-- You want to automate the feedback loop: implementing changes based on reviews and replying to comments.
-- You need to filter feedback based on criticality (High/Medium vs. Low/Nitpick).
+- Creating a PR and actively waiting for code reviews (e.g., from Gemini, Copilot, or human reviewers).
+- Automating the feedback loop: implementing changes based on reviews, validating, committing, pushing, and replying to comments.
+- Filtering feedback based on criticality (High/Medium vs. Low/Nitpick).
 
 ## Workflow
 
 ### 1. Create Pull Request
 
-First, ensure you are on the correct feature branch.
-Check if a PR already exists for this branch. If not, create one.
+Ensure you are on the correct feature branch. Check if a PR already exists for this branch. If not, create one.
 
 ```bash
 # Check if PR exists
@@ -31,52 +30,96 @@ gh pr create --title "feat: <title>" --body "Automated PR created by Agent"
 
 ### 2. Monitor for Reviews
 
-Use the `scripts/monitor_pr.py` script to wait for new review activity. This script polls the PR every 15 seconds and exits when new comments or reviews are detected.
+Use the `scripts/monitor_pr.py` script to wait for new review activity. The script polls the PR every 15 seconds with a **20-minute timeout** and **waits for ALL requested reviewers to finish** before returning.
 
 ```bash
-# Get PR URL first if you don't have it
 PR_URL=$(gh pr view --json url -q .url)
 
-# Run the monitor script
-python3 skills/pr-manager/scripts/monitor_pr.py "$PR_URL" --interval 15
+# Run the monitor — exits only when all reviewers have submitted
+python3 skills/pr-manager/scripts/monitor_pr.py "$PR_URL" --interval 15 --timeout 1200
 ```
 
-The script will output JSON containing `new_comments` and `new_reviews`.
+**Exit codes:**
+- `0` — All reviewers completed, new activity detected.
+- `1` — Failed to fetch PR data.
+- `2` — Timeout reached. Check JSON output for `all_reviewers_done` and `pending_reviewer`.
+
+**Important:** If the script detects new activity but a reviewer is still pending, it continues waiting. It only exits successfully when every requested reviewer has submitted their review. If timeout is reached with a pending reviewer, re-run the monitor to keep waiting.
 
 ### 3. Analyze Feedback
 
-When new activity is detected:
-1.  **Parse the JSON output** from `monitor_pr.py`.
-2.  **Examine each comment/review suggestion.**
-3.  **Critically Evaluate:**
-    *   **Is this feedback valid?** Does it improve the code?
-    *   **Is it Critical?**
-        *   **High:** Security, Bugs, Major Logic Flaws.
-        *   **Medium:** Performance, Best Practices, Maintainability.
-        *   **Low/Nitpick:** Formatting (if linter exists), subjective style preferences.
+When all reviewers have finished and new activity is detected:
+1. Parse the JSON output from `monitor_pr.py`.
+2. Examine each comment/review suggestion.
+3. Critically evaluate:
+    - **High:** Security, Bugs, Major Logic Flaws.
+    - **Medium:** Performance, Best Practices, Maintainability.
+    - **Low/Nitpick:** Formatting (if linter exists), subjective style preferences.
 
 ### 4. Implement Changes
 
 **Only implement High or Medium criticality feedback.**
-- For Low/Nitpick feedback: Do not implement unless it's trivial and automated (e.g., formatting).
+- For Low/Nitpick feedback: Do not implement unless it's trivial and automated.
 - If a suggestion is wrong or unnecessary, do *not* implement it.
 
-### 5. Reply to Comments
+### 5. Validate the Codebase
 
-You MUST reply to **every single comment** that was part of the review batch.
+**Before committing any changes, run the appropriate validation commands for the codebase.** Detect the project type and run the relevant checks:
 
-*   **If implemented:** "Fixed: [Brief explanation of change]"
-*   **If NOT implemented:** "Skipped: [Reasoning why it was not implemented, e.g., 'This is a nitpick handled by formatter' or 'This suggestion would break X']"
+| Indicator | Commands to Run |
+|-----------|----------------|
+| `package.json` with `lint` script | `npm run lint` or `pnpm lint` or `yarn lint` |
+| `package.json` with `check` script | `npm run check` or `pnpm check` |
+| `package.json` with `typecheck` script | `npm run typecheck` or `pnpm typecheck` |
+| `tsconfig.json` | `npx tsc --noEmit` (if no check/typecheck script exists) |
+| `go.mod` | `go mod tidy && go vet ./... && go build ./...` |
+| `Cargo.toml` | `cargo check && cargo clippy` |
+| `pyproject.toml` / `setup.py` | `ruff check .` or `flake8` or `pylint` (whichever is configured) |
+| `Makefile` with `lint` target | `make lint` |
+| `.eslintrc*` / `eslint.config.*` | `npx eslint .` (if no package.json lint script) |
+
+**Detection strategy:**
+1. Check `package.json` scripts for `lint`, `check`, `typecheck`, `build` commands.
+2. Look for language-specific config files (`go.mod`, `Cargo.toml`, `pyproject.toml`).
+3. Run the most relevant commands. If multiple apply, run all of them.
+4. If any validation fails, fix the issues before proceeding.
+
+### 6. Commit and Push
+
+After implementing changes and passing validation:
 
 ```bash
-# Reply to a specific comment (replace COMMENT_ID)
-gh pr comment "$PR_URL" --reply-to COMMENT_ID --body "Fixed: updated logic."
+# Stage changed files (be specific, avoid staging unrelated files)
+git add <changed-files>
+
+# Commit with a descriptive message
+git commit -m "fix: address code review feedback"
+
+# Push to the branch
+git push
 ```
 
-### 6. Loop or Finalize
+### 7. Reply to Comments
 
-- If the review requested changes (`CHANGES_REQUESTED`), repeat from **Step 2** (Monitor) after pushing fixes.
-- If the review was `APPROVED` or comments are addressed:
-    1.  Output the PR URL.
-    2.  Ask the user for final confirmation to merge.
-    3.  If confirmed, merge: `gh pr merge "$PR_URL" --merge --delete-branch`.
+Reply to **every single comment** that was part of the review batch.
+
+- **If implemented:** "Fixed: [Brief explanation of change]"
+- **If NOT implemented:** "Skipped: [Reasoning why it was not implemented, e.g., 'This is a nitpick handled by formatter' or 'This suggestion would break X']"
+
+```bash
+# Reply to a specific comment
+gh api repos/{owner}/{repo}/pulls/{pr_number}/comments/{comment_id}/replies \
+  -f body="Fixed: updated logic per review feedback."
+```
+
+### 8. Loop or Finalize
+
+After pushing fixes and replying to all comments:
+
+1. **Re-run the monitor** from Step 2 to check if any reviewer re-requests changes or new reviews come in.
+2. If the review state is `CHANGES_REQUESTED`, repeat from Step 2.
+3. **Do not exit while any reviewer is still actively reviewing.** The monitor script enforces this — if a requested reviewer hasn't submitted their review, it keeps waiting.
+4. If all reviews are `APPROVED` or all comments are addressed with no pending reviewers:
+    - Output the PR URL.
+    - Ask the user for final confirmation to merge.
+    - If confirmed: `gh pr merge "$PR_URL" --merge --delete-branch`.
