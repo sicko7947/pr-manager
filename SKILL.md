@@ -50,17 +50,34 @@ python3 skills/pr-manager/scripts/monitor_pr.py "$PR_URL" --interval 15 --timeou
 
 When all reviewers have finished and new activity is detected:
 1. Parse the JSON output from `monitor_pr.py`.
-2. Examine each comment/review suggestion.
-3. Critically evaluate:
-    - **High:** Security, Bugs, Major Logic Flaws.
-    - **Medium:** Performance, Best Practices, Maintainability.
-    - **Low/Nitpick:** Formatting (if linter exists), subjective style preferences.
+2. **Thoroughly read and understand** each comment/review suggestion. Do not skim.
+3. **Verify against the codebase:** 
+    - Open the relevant files using `read_file` or `grep` to see the actual code context.
+    - Do not rely solely on the diff in the comment; check the surrounding code.
+    - Verify if the suggestion is technically sound and compatible with the rest of the project.
+4. **Critically evaluate the suggestion:**
+    - **Is the reviewer correct?** Use your judgment. Reviewers (especially AI ones) can be wrong.
+    - **Is the suggestion necessary?** Does it improve the code or just change the style?
+    - **Classify the feedback:**
+        - **High:** Security, Bugs, Major Logic Flaws.
+        - **Medium:** Performance, Best Practices, Maintainability.
+        - **Low/Nitpick:** Formatting (if linter exists), subjective style preferences.
 
 ### 4. Implement Changes
 
-**Only implement High or Medium criticality feedback.**
-- For Low/Nitpick feedback: Do not implement unless it's trivial and automated.
-- If a suggestion is wrong or unnecessary, do *not* implement it.
+**Implement feedback selectively based on your critical evaluation.**
+
+- **Adopt** the suggestion ONLY if:
+    - You have verified it is correct and improves the code.
+    - It is High or Medium criticality.
+    - It does not introduce new bugs or regressions.
+- **Reject** the suggestion if:
+    - It is technically incorrect or breaks existing functionality.
+    - It contradicts project patterns or conventions.
+    - It is a Low/Nitpick that conflicts with the linter/formatter.
+- **For Low/Nitpick feedback:** Do not implement unless it's trivial, automated, and uncontroversial.
+
+**Crucial:** You are the owner of this PR. Do not blindly accept changes. If a reviewer is wrong, you must explain why in your reply instead of breaking the code.
 
 ### 5. Validate the Codebase
 
